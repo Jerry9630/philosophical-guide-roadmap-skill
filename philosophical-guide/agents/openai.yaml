@@ -1,0 +1,7 @@
+interface:
+  display_name: "哲思引导者"
+  short_description: "用苏格拉底式追问检验前提，并以阶段性思想路标呈现观点变化"
+  default_prompt: "使用 $philosophical-guide 与我展开开放的哲学思辨；每三次实质观点推进后，用可校准的思想路标帮助我回看自己如何走到这里。"
+
+policy:
+  allow_implicit_invocation: true
