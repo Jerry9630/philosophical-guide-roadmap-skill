@@ -1104,7 +1104,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", required=True, type=Path, help="Roadmap state JSON")
     parser.add_argument("--output-dir", required=True, type=Path, help="Directory for outputs")
     parser.add_argument("--basename", default="thought-roadmap", help="Output filename stem")
-    parser.add_argument("--require-png", action="store_true", help="Fail if PNG cannot be rendered")
+    png_mode = parser.add_mutually_exclusive_group()
+    png_mode.add_argument("--require-png", action="store_true", help="Fail if PNG cannot be rendered")
+    png_mode.add_argument("--skip-png", action="store_true", help="Generate SVG and Markdown without trying PNG")
     parser.add_argument("--force", action="store_true", help="Replace existing output files")
     return parser.parse_args()
 
@@ -1138,7 +1140,10 @@ def main() -> int:
             temp_md = temp_dir / md_path.name
             temp_svg.write_text(svg, encoding="utf-8", newline="\n")
             temp_md.write_text(markdown, encoding="utf-8", newline="\n")
-            png_ok, png_engine = render_png(temp_svg, temp_png, width, height)
+            if args.skip_png:
+                png_ok, png_engine = False, "skipped by request"
+            else:
+                png_ok, png_engine = render_png(temp_svg, temp_png, width, height)
             if not png_ok and args.require_png:
                 print(f"PNG not generated: {png_engine}", file=sys.stderr)
                 return 3
@@ -1157,7 +1162,7 @@ def main() -> int:
             "dimensions": {"width": width, "height": height},
         }
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        if not png_ok:
+        if not png_ok and not args.skip_png:
             print(f"PNG not generated: {png_engine}", file=sys.stderr)
             return 3 if args.require_png else 0
         return 0

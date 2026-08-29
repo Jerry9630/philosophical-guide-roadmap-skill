@@ -2,7 +2,7 @@
 
 一个面向中文哲学讨论的开源 Agent Skill：通过概念澄清、前提检验、有限反例和开放追问，帮助用户检查自己如何走向判断；在用户明确启用后，还可以维护可校准、可跨对话续聊的思想路标。
 
-> 当前状态：v0.3.0-rc.2。Skill、路标渲染器与公开评测摘要可以运行，渲染器的程序回归已通过；核心引导与“模型是否服从不可信导入边界”尚未完成新一轮正式模型回归，不应描述为效果已经验证的教学产品。
+> 当前状态：v0.3.0-rc.3。Skill 与路标渲染器可以完整运行，程序回归已通过；核心引导与“模型是否服从不可信导入边界”尚未完成 rc.3 正式模型回归，因此定位为 research preview，不把设计修订描述成效果已经验证。
 
 ![思想路标预览](preview/thought-roadmap-v1.png)
 
@@ -12,9 +12,35 @@
 
 Plugin 是后续分发包装：它可以把一个或多个 Skill、连接器、依赖与展示资源打成可安装产品，并覆盖更多 ChatGPT 端。当前阶段先把核心行为和评测证据做稳；需要进入统一插件目录或加入外部工具时，再在本仓库外层增加 plugin manifest，不需要重写 Skill。
 
+## 30 秒完整演示
+
+克隆或解压本仓库后，在仓库根目录运行：
+
+```text
+python philosophical-guide/scripts/render_thought_roadmap.py --input philosophical-guide/references/example-roadmap.json --output-dir demo-output --basename philosophical-guide-demo --skip-png
+```
+
+不需要安装第三方库。成功后会生成：
+
+- `demo-output/philosophical-guide-demo.svg`：可直接打开的思想路线图；
+- `demo-output/philosophical-guide-demo.md`：人可读路标与完整续聊 JSON。
+
+这是确定性的最小完整链路：示例状态 → 严格校验 → 无损折叠 → SVG → 可跨对话恢复的 Markdown。若还需要 PNG，去掉 `--skip-png`；系统存在 CairoSVG 或可用的 Chrome／Chromium／Edge 时会同时生成。
+
+## 为什么主 Skill 不算过长
+
+运行时采用渐进加载：
+
+- 普通哲学对话只读取 `SKILL.md`；
+- 确认存在事实、推理、范畴、关联或成见问题时，才读取 `references/diagnostic-playbook.md` 的对应部分；
+- 只有用户明确启用思想路标时，才读取路线图工作流与数据协议；
+- 近 50 KB 的渲染脚本由 Python 直接执行，不需要把源码加载进对话上下文。
+
+因此仓库完整性与单轮上下文负担是两件事：支持文件可以完整，主入口只保留每轮都需要的决策规则。
+
 ## 安装
 
-下载 GitHub Release 中的 `philosophical-guide-roadmap-v0.3.0-rc.2.zip`，核对 `SHA256SUMS.txt` 后解压，把其中的 `philosophical-guide` 文件夹放入个人 Skill 目录：
+下载 GitHub Release 中的 `philosophical-guide-roadmap-v0.3.0-rc.3.zip`，核对 `SHA256SUMS.txt` 后解压，把其中的 `philosophical-guide` 文件夹放入个人 Skill 目录：
 
 - Windows：`%USERPROFILE%\.agents\skills\philosophical-guide`
 - macOS / Linux：`$HOME/.agents/skills/philosophical-guide`
@@ -89,7 +115,7 @@ philosophical-guide-roadmap-skill/
 python -m unittest discover -s tests -v
 ```
 
-26 项自动测试覆盖安装结构、预览同步、状态校验、无损折叠、展开恢复、可选原话，以及 Markdown 注入、重复键、隐藏字段、坏对象、非法字符、极端画布、错误桥接和陈旧输出等回归风险。模型行为回归仍需在冻结 Skill 上另行运行，不能由代码测试替代。
+27 项自动测试覆盖安装结构、预览同步、无依赖快速演示、状态校验、无损折叠、展开恢复、可选原话，以及 Markdown 注入、重复键、隐藏字段、坏对象、非法字符、极端画布、错误桥接和陈旧输出等回归风险。模型行为回归仍需在冻结 Skill 上另行运行，不能由代码测试替代。
 
 ## 许可证
 

@@ -242,6 +242,33 @@ class RoadmapStateTests(unittest.TestCase):
             self.assertTrue((output_dir / "map.svg").is_file())
             self.assertTrue((output_dir / "map.md").is_file())
 
+    def test_skip_png_completes_without_optional_renderer(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            temp_dir = Path(temp_name)
+            input_path = temp_dir / "input.json"
+            input_path.write_text(json.dumps(self.state, ensure_ascii=False), encoding="utf-8")
+            output_dir = temp_dir / "out"
+            argv = [
+                str(SCRIPT_PATH),
+                "--input", str(input_path),
+                "--output-dir", str(output_dir),
+                "--basename", "demo",
+                "--skip-png",
+            ]
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with mock.patch.object(ROADMAP.sys, "argv", argv), mock.patch.object(
+                ROADMAP, "render_png"
+            ) as png_mock, mock.patch("sys.stdout", new=stdout), mock.patch(
+                "sys.stderr", new=stderr
+            ):
+                self.assertEqual(ROADMAP.main(), 0)
+            png_mock.assert_not_called()
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertTrue((output_dir / "demo.svg").is_file())
+            self.assertTrue((output_dir / "demo.md").is_file())
+            self.assertFalse((output_dir / "demo.png").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

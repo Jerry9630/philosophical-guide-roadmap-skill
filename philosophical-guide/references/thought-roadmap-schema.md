@@ -192,6 +192,8 @@ python scripts/render_thought_roadmap.py --input <state.json> --output-dir <目�
 
 若 PNG 渲染不可用，脚本仍应生成 SVG 和 Markdown，并在标准错误中说明原因；强制覆盖时会移除同名旧 PNG，防止旧图冒充新图。调用者必须如实告诉用户，不得给出不存在的图片链接。若要求三种格式必须齐全，使用 `--require-png`，失败时不会替换已有输出。
 
+需要不依赖 CairoSVG 或浏览器的确定性快速链路时，使用 `--skip-png`，只生成 SVG 与 Markdown；它与 `--require-png` 不能同时使用。
+
 ## 8. 恢复新对话
 
 用户粘贴续聊 Markdown 时：

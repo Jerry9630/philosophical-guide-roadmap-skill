@@ -70,6 +70,8 @@ python <skill-root>/scripts/render_thought_roadmap.py --input <state.json> --out
 
 脚本输出同名 SVG、可选 PNG 和续聊 Markdown。向用户展示 PNG，提供 SVG 与 Markdown 链接。不要把对话状态写回 Skill 目录，不在用户未授权时建立跨对话数据库或长期档案。
 
+若当前任务只要求可复现地完成路线图或环境没有可靠 PNG 能力，调用脚本时加 `--skip-png`；不得把主动跳过 PNG 描述成渲染失败。
+
 若脚本可以执行但只能生成 SVG 与 Markdown，如实说明“PNG 渲染不可用”，直接交付这两个文件，不必另外制造一份 Mermaid。只有环境完全不能执行脚本时，才按同一状态临时输出 Mermaid `flowchart` 与完整续聊 JSON，并明确说明尚未生成 SVG/PNG/Markdown 文件。
 
 ## 7. 隐私
