@@ -22,7 +22,7 @@ class SkillStructureTests(unittest.TestCase):
         self.assertLessEqual(len(name), 64)
         self.assertLessEqual(len(description), 1024)
         self.assertIn("license: MIT", frontmatter)
-        self.assertIn('version: "0.3.0-rc.1"', frontmatter)
+        self.assertIn('version: "0.3.0-rc.2"', frontmatter)
         self.assertNotIn("[TODO:", content)
 
     def test_referenced_skill_files_exist(self):

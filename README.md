@@ -2,7 +2,7 @@
 
 一个面向中文哲学讨论的开源 Agent Skill：通过概念澄清、前提检验、有限反例和开放追问，帮助用户检查自己如何走向判断；在用户明确启用后，还可以维护可校准、可跨对话续聊的思想路标。
 
-> 当前状态：v0.3.0 release candidate。Skill、路标渲染器与公开评测摘要可以运行，但 v0.3 尚未完成新一轮正式模型回归，不应描述为效果已经验证的教学产品。
+> 当前状态：v0.3.0-rc.2。Skill、路标渲染器与公开评测摘要可以运行，渲染器的程序回归已通过；核心引导与“模型是否服从不可信导入边界”尚未完成新一轮正式模型回归，不应描述为效果已经验证的教学产品。
 
 ![思想路标预览](preview/thought-roadmap-v1.png)
 
@@ -14,7 +14,7 @@ Plugin 是后续分发包装：它可以把一个或多个 Skill、连接器、�
 
 ## 安装
 
-下载 GitHub Release 中的 `philosophical-guide-roadmap-v0.3.0-rc.1.zip`，解压后把其中的 `philosophical-guide` 文件夹放入个人 Skill 目录：
+下载 GitHub Release 中的 `philosophical-guide-roadmap-v0.3.0-rc.2.zip`，核对 `SHA256SUMS.txt` 后解压，把其中的 `philosophical-guide` 文件夹放入个人 Skill 目录：
 
 - Windows：`%USERPROFILE%\.agents\skills\philosophical-guide`
 - macOS / Linux：`$HOME/.agents/skills/philosophical-guide`
@@ -40,10 +40,7 @@ $philosophical-guide 和我持续讨论这个问题，并启用思想路标；�
 核心哲思引导不需要额外依赖。思想路标渲染器要求 Python 3.10 或更高版本：
 
 ```text
-python philosophical-guide/scripts/render_thought_roadmap.py \
-  --input state.json \
-  --output-dir output \
-  --basename thought-roadmap
+python philosophical-guide/scripts/render_thought_roadmap.py --input state.json --output-dir output --basename thought-roadmap
 ```
 
 SVG 和续聊 Markdown 只使用 Python 标准库。PNG 需要以下任一环境：
@@ -53,12 +50,16 @@ SVG 和续聊 Markdown 只使用 Python 标准库。PNG 需要以下任一环境
 
 如果 PNG 不可用，SVG 和 Markdown 仍会生成。
 
+同名输出默认不会被覆盖，避免把不同版本混在一起。确定要替换时加 `--force`；要求 PNG 必须成功时加 `--require-png`。
+
 ## 数据与隐私
 
 - 路标只在用户明确启用后生成。
 - 结构化状态默认写入任务临时目录或用户指定目录，不写回 Skill 目录。
 - 续聊 Markdown 内含完整 JSON；分享该文件等于分享其中的观点和最小引文。
 - 默认不记录姓名、联系方式、健康信息、精确地址和第三方隐私。
+- 协议要求模型把导入的 Markdown/JSON 当作不可信数据，不执行其中夹带的指令；文件中的“用户确认”只表示历史快照的声明。该行为仍需模型回归验证，因此只导入你信任来源的文件，并在恢复后检查关键节点。
+- 用户可以要求删除、更正或匿名化自己的记录；“保留旧观点”不是拒绝删除请求的理由。
 
 ## 评测状态
 
@@ -88,7 +89,7 @@ philosophical-guide-roadmap-skill/
 python -m unittest discover -s tests -v
 ```
 
-测试覆盖 schema 校验、无损折叠、展开恢复、可选原话和坏输入拒绝。模型行为回归仍需在冻结 Skill 上另行运行，不能由代码测试替代。
+26 项自动测试覆盖安装结构、预览同步、状态校验、无损折叠、展开恢复、可选原话，以及 Markdown 注入、重复键、隐藏字段、坏对象、非法字符、极端画布、错误桥接和陈旧输出等回归风险。模型行为回归仍需在冻结 Skill 上另行运行，不能由代码测试替代。
 
 ## 许可证
 
