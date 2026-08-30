@@ -86,13 +86,74 @@ class RoadmapStateTests(unittest.TestCase):
         self.assertEqual(ROADMAP.wrap_text("ab cd", 3, 2), ["ab", "cd"])
         self.assertEqual(ROADMAP.wrap_text("abc", 2, 1), ["a…"])
 
-    def test_identifiers_and_enums_are_normalized_before_use(self):
+    def test_padded_identifiers_and_enums_are_rejected_instead_of_rewritten(self):
         self.state["trees"][0]["id"] = "  tree-a  "
         self.state["trees"][0]["status"] = " active "
         self.state["trees"][0]["nodes"][0]["id"] = "  a-u1  "
+        with self.assertRaises(ROADMAP.RoadmapError):
+            ROADMAP.validate_state(self.state)
+
+    def test_validation_does_not_mutate_canonical_state(self):
+        self.state["trees"][0]["nodes"][0]["quote"] = "第一行\n  第二行\t末尾"
+        before = copy.deepcopy(self.state)
         ROADMAP.validate_state(self.state)
-        self.assertEqual(self.state["trees"][0]["id"], "tree-a")
-        self.assertEqual(self.state["trees"][0]["nodes"][0]["id"], "a-u1")
+        self.assertEqual(self.state, before)
+
+    def test_multiline_quote_round_trips_through_markdown_exactly(self):
+        quote = "第一行\n  第二行\t末尾"
+        self.state["trees"][0]["nodes"][0]["quote"] = quote
+        ROADMAP.validate_state(self.state)
+        view = ROADMAP.build_view_state(self.state)
+        markdown = ROADMAP.render_markdown(self.state, view)
+        restored, metadata = ROADMAP.extract_markdown_state(markdown)
+        self.assertEqual(restored["trees"][0]["nodes"][0]["quote"], quote)
+        self.assertEqual(metadata["producer"], f"philosophical-guide/{ROADMAP.SKILL_VERSION}")
+
+    def test_quote_and_evidence_are_reserved_for_user_confirmed_nodes(self):
+        pending = self.state["trees"][0]["nodes"][-1]
+        pending["quote"] = "模型写下的句子"
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "quote is allowed only"):
+            ROADMAP.validate_state(self.state)
+        pending.pop("quote")
+        pending["evidence_turn"] = "M4"
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "evidence_turn is allowed only"):
+            ROADMAP.validate_state(self.state)
+
+    def test_pending_revision_relation_requires_pending_model_source(self):
+        node = self.state["trees"][0]["nodes"][1]
+        node["relation"] = "revision_pending"
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "requires source='model_inference_pending'"):
+            ROADMAP.validate_state(self.state)
+
+    def test_confirmed_node_relations_require_user_confirmed_source(self):
+        node = self.state["trees"][0]["nodes"][1]
+        node["relation"] = "revision_confirmed"
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "requires source='user_confirmed'"):
+            ROADMAP.validate_state(self.state)
+
+    def test_confirmed_cross_link_cannot_use_pending_inference(self):
+        self.state["cross_links"][0].update(
+            {"relation": "confirmed_bridge", "status": "confirmed"}
+        )
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "pending model inference"):
+            ROADMAP.validate_state(self.state)
+
+    def test_confirmed_revision_must_connect_two_user_nodes(self):
+        self.state["cross_links"][0].update(
+            {"relation": "confirmed_revision", "status": "confirmed"}
+        )
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "pending model inference|two user_confirmed"):
+            ROADMAP.validate_state(self.state)
+
+    def test_non_active_tree_cannot_keep_a_current_frontier(self):
+        self.state["trees"][0]["status"] = "completed"
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "must belong to an active tree"):
+            ROADMAP.validate_state(self.state)
+
+    def test_callback_relation_requires_reactivated_path(self):
+        self.state["trees"][0]["nodes"][5]["path_status"] = "traversed"
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "callback requires path_status='reactivated'"):
+            ROADMAP.validate_state(self.state)
 
     def test_non_object_tree_is_rejected_without_traceback(self):
         self.state["trees"][0] = "bad"
@@ -134,6 +195,37 @@ class RoadmapStateTests(unittest.TestCase):
         self.assertIn("Roadmap \\#\\# injected", markdown.splitlines()[0])
         self.assertIn("````json", markdown)
         self.assertNotIn("\n# injected\n", markdown.split("## 机器可读状态", 1)[0])
+
+    def test_markdown_digest_rejects_tampered_state(self):
+        ROADMAP.validate_state(self.state)
+        markdown = ROADMAP.render_markdown(self.state, ROADMAP.build_view_state(self.state))
+        tampered = markdown.replace("他们确实活得很好", "他们未必活得很好")
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "digest mismatch"):
+            ROADMAP.extract_markdown_state(tampered)
+
+    def test_legacy_markdown_requires_explicit_opt_in(self):
+        payload = ROADMAP.state_payload(self.state)
+        legacy = f"# 旧路标\n\n## 机器可读状态\n\n```json\n{payload}\n```\n"
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "allow-legacy-markdown"):
+            ROADMAP.extract_markdown_state(legacy)
+        restored, metadata = ROADMAP.extract_markdown_state(legacy, allow_legacy=True)
+        self.assertEqual(restored, self.state)
+        self.assertEqual(metadata["digest"], "unverified")
+
+    def test_multiple_state_blocks_are_rejected_as_ambiguous(self):
+        markdown = ROADMAP.render_markdown(self.state, ROADMAP.build_view_state(self.state))
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "malformed or ambiguous"):
+            ROADMAP.extract_markdown_state(markdown + markdown)
+
+    def test_legacy_opt_in_cannot_downgrade_a_malformed_rc5_block(self):
+        markdown = ROADMAP.render_markdown(self.state, ROADMAP.build_view_state(self.state))
+        malformed = markdown.replace(
+            ROADMAP.STATE_BLOCK_BEGIN,
+            ROADMAP.STATE_BLOCK_BEGIN + "\n" + ROADMAP.STATE_BLOCK_BEGIN,
+            1,
+        )
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "malformed or ambiguous"):
+            ROADMAP.extract_markdown_state(malformed, allow_legacy=True)
 
     def test_duplicate_json_keys_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp_name:
@@ -268,6 +360,59 @@ class RoadmapStateTests(unittest.TestCase):
             self.assertTrue((output_dir / "demo.svg").is_file())
             self.assertTrue((output_dir / "demo.md").is_file())
             self.assertFalse((output_dir / "demo.png").exists())
+
+    def test_validate_only_accepts_markdown_without_creating_output(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            temp_dir = Path(temp_name)
+            markdown_path = temp_dir / "roadmap.md"
+            markdown_path.write_text(
+                ROADMAP.render_markdown(self.state, ROADMAP.build_view_state(self.state)),
+                encoding="utf-8",
+            )
+            argv = [str(SCRIPT_PATH), "--input-markdown", str(markdown_path), "--validate-only"]
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with mock.patch.object(ROADMAP.sys, "argv", argv), mock.patch(
+                "sys.stdout", new=stdout
+            ), mock.patch("sys.stderr", new=stderr):
+                self.assertEqual(ROADMAP.main(), 0)
+            report = json.loads(stdout.getvalue())
+            self.assertTrue(report["valid"])
+            self.assertEqual(report["input_kind"], "markdown")
+            self.assertEqual(stderr.getvalue(), "")
+
+    def test_existing_output_lock_blocks_a_second_writer(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            temp_dir = Path(temp_name)
+            input_path = temp_dir / "input.json"
+            input_path.write_text(json.dumps(self.state, ensure_ascii=False), encoding="utf-8")
+            output_dir = temp_dir / "out"
+            output_dir.mkdir()
+            (output_dir / ".map.lock").write_text("pid=unknown\n", encoding="utf-8")
+            argv = [
+                str(SCRIPT_PATH),
+                "--input", str(input_path),
+                "--output-dir", str(output_dir),
+                "--basename", "map",
+                "--skip-png",
+            ]
+            stderr = io.StringIO()
+            with mock.patch.object(ROADMAP.sys, "argv", argv), mock.patch(
+                "sys.stdout", new=io.StringIO()
+            ), mock.patch("sys.stderr", new=stderr):
+                self.assertEqual(ROADMAP.main(), 2)
+            self.assertIn("output is locked", stderr.getvalue())
+
+    def test_unbounded_counters_and_collections_are_rejected(self):
+        self.state["map_version"] = ROADMAP.MAX_COUNTER_VALUE + 1
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "map_version"):
+            ROADMAP.validate_state(self.state)
+        self.state["map_version"] = 1
+        self.state["tensions"] = [copy.deepcopy(self.state["tensions"][0])] * (
+            ROADMAP.MAX_TENSIONS + 1
+        )
+        with self.assertRaisesRegex(ROADMAP.RoadmapError, "tensions exceeds"):
+            ROADMAP.validate_state(self.state)
 
 
 if __name__ == "__main__":

@@ -2,13 +2,13 @@
 
 一个面向中文哲学讨论的开源 Agent Skill：通过概念澄清、前提检验、有限反例和开放追问，帮助用户检查自己如何走向判断；在用户明确启用后，还可以维护可校准、可跨对话续聊的思想路标。
 
-> 当前状态：v0.3.0-rc.3。Skill 与路标渲染器可以完整运行，程序回归已通过；核心引导与“模型是否服从不可信导入边界”尚未完成 rc.3 正式模型回归，因此定位为 research preview，不把设计修订描述成效果已经验证。
+> 当前状态：v0.3.0-rc.5。Skill、路标渲染器、Markdown 恢复校验与可复现打包链路可以完整运行，程序回归已通过；模式提醒与核心哲思引导尚未完成 rc.5 正式模型回归，因此仍定位为 research preview，不把程序修复描述成模型效果已经验证。
 
 ![思想路标预览](preview/thought-roadmap-v1.png)
 
 ## 为什么先发布 standalone skill
 
-本仓库目前只有一个 Skill 和一个本地渲染脚本，不依赖连接器、账号授权或 MCP 服务。standalone skill 已足够支持 GitHub 开源、代码审查、手动安装，以及在 ChatGPT 桌面端、Codex CLI 和 IDE 扩展中使用。
+本仓库目前只有一个 Skill 和一个本地渲染脚本，不依赖连接器、账号授权或 MCP 服务。standalone skill 已足够支持 GitHub 开源、代码审查、手动安装和支持 Skills 的 Codex 环境。[OpenAI API 的 Skills 创建接口](https://developers.openai.com/api/reference/python/resources/skills/methods/create)也接受单个 ZIP 文件或目录上传；具体产品中的可用性仍以该产品当时的官方说明为准。
 
 Plugin 是后续分发包装：它可以把一个或多个 Skill、连接器、依赖与展示资源打成可安装产品，并覆盖更多 ChatGPT 端。当前阶段先把核心行为和评测证据做稳；需要进入统一插件目录或加入外部工具时，再在本仓库外层增加 plugin manifest，不需要重写 Skill。
 
@@ -40,10 +40,10 @@ python philosophical-guide/scripts/render_thought_roadmap.py --input philosophic
 
 ## 安装
 
-下载 GitHub Release 中的 `philosophical-guide-roadmap-v0.3.0-rc.3.zip`，核对 `SHA256SUMS.txt` 后解压，把其中的 `philosophical-guide` 文件夹放入个人 Skill 目录：
+下载 GitHub Release 中的 `philosophical-guide-roadmap-v0.3.0-rc.5.zip`，核对 `SHA256SUMS.txt` 后解压。ZIP 顶层只有一个 `philosophical-guide` 文件夹；把它放入个人 Codex Skill 目录：
 
-- Windows：`%USERPROFILE%\.agents\skills\philosophical-guide`
-- macOS / Linux：`$HOME/.agents/skills/philosophical-guide`
+- Windows：`%USERPROFILE%\.codex\skills\philosophical-guide`
+- macOS / Linux：`$HOME/.codex/skills/philosophical-guide`
 
 Codex 通常会自动发现变更；如果没有出现，重启 Codex。也可以让 Codex 的 `$skill-installer` 从本 GitHub 仓库安装该目录。
 
@@ -60,6 +60,8 @@ $philosophical-guide 我想检验“未经反思的人生是否低一等”这�
 ```text
 $philosophical-guide 和我持续讨论这个问题，并启用思想路标；每三次实质观点推进后帮我回看。
 ```
+
+第一次显式调用时，Skill 会在正常哲思回应中简短说明：普通模式默认不保存路标，可以随时说“开启思想路标”。如果后续实际出现观点修正、多个问题相互连接或回到旧分支，而路标仍未开启，它可以再作至多一次贴合语境的提醒；不会仅因聊满三轮而提示，也不会替用户自动开启或写入文件。
 
 ## 路标输出
 
@@ -78,13 +80,21 @@ SVG 和续聊 Markdown 只使用 Python 标准库。PNG 需要以下任一环境
 
 同名输出默认不会被覆盖，避免把不同版本混在一起。确定要替换时加 `--force`；要求 PNG 必须成功时加 `--require-png`。
 
+恢复 rc.5 生成的续聊 Markdown 时，先执行完整性与结构校验：
+
+```text
+python philosophical-guide/scripts/render_thought_roadmap.py --input-markdown roadmap.md --validate-only
+```
+
+退出码为 `0` 才表示可恢复。也可以把 `--validate-only` 换成 `--output-dir ... --basename ... --skip-png`，从已验证 Markdown 重新出图。旧版 Markdown 默认拒绝；只有确认来源可信时才显式加 `--allow-legacy-markdown`。
+
 ## 数据与隐私
 
 - 路标只在用户明确启用后生成。
 - 结构化状态默认写入任务临时目录或用户指定目录，不写回 Skill 目录。
 - 续聊 Markdown 内含完整 JSON；分享该文件等于分享其中的观点和最小引文。
 - 默认不记录姓名、联系方式、健康信息、精确地址和第三方隐私。
-- 协议要求模型把导入的 Markdown/JSON 当作不可信数据，不执行其中夹带的指令；文件中的“用户确认”只表示历史快照的声明。该行为仍需模型回归验证，因此只导入你信任来源的文件，并在恢复后检查关键节点。
+- 协议要求模型把导入的 Markdown/JSON 当作不可信数据，不执行其中夹带的指令；文件中的“用户确认”只表示历史快照的声明。rc.5 Markdown 会记录状态 SHA-256，用于发现意外损坏，但这不是数字签名，不能证明作者或来源可信。只导入你信任来源的文件，并在恢复后检查关键节点。
 - 用户可以要求删除、更正或匿名化自己的记录；“保留旧观点”不是拒绝删除请求的理由。
 
 ## 评测状态
@@ -104,7 +114,10 @@ philosophical-guide-roadmap-skill/
 │   └── scripts/
 ├── preview/                   # 公开预览
 ├── tests/                     # 标准库回归测试
+├── tools/                     # 可复现发布构建与 ZIP 校验
+├── .github/workflows/         # 跨平台测试与标签发布
 ├── README.md
+├── SECURITY.md
 ├── CHANGELOG.md
 └── LICENSE
 ```
@@ -115,7 +128,16 @@ philosophical-guide-roadmap-skill/
 python -m unittest discover -s tests -v
 ```
 
-27 项自动测试覆盖安装结构、预览同步、无依赖快速演示、状态校验、无损折叠、展开恢复、可选原话，以及 Markdown 注入、重复键、隐藏字段、坏对象、非法字符、极端画布、错误桥接和陈旧输出等回归风险。模型行为回归仍需在冻结 Skill 上另行运行，不能由代码测试替代。
+49 项自动测试覆盖安装结构、预览同步、无依赖快速演示、状态校验、逐字档案保持、无损折叠、Markdown 摘要校验与恢复、语义来源约束、并发输出锁、资源上限，以及重复键、隐藏字段、坏对象、非法字符、极端画布、错误桥接、陈旧输出和可复现 ZIP 等回归风险。模型行为回归仍需在冻结 Skill 上另行运行，不能由代码测试替代。
+
+发布包由标准库脚本确定性生成，并立即逐成员比对源目录：
+
+```text
+python tools/build_release.py build
+python tools/build_release.py verify --archive philosophical-guide-roadmap-v0.3.0-rc.5.zip
+```
+
+安全问题与不可信导入边界见 [SECURITY.md](SECURITY.md)。
 
 ## 许可证
 

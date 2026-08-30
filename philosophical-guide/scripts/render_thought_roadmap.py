@@ -8,6 +8,7 @@ produced when CairoSVG or a compatible headless browser is available.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import os
@@ -19,17 +20,23 @@ import tempfile
 import time
 import unicodedata
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 SCHEMA_VERSION = "1.1"
+SKILL_VERSION = "0.3.0-rc.5"
 MAX_INPUT_BYTES = 5 * 1024 * 1024
+MAX_MARKDOWN_BYTES = 6 * 1024 * 1024
 MAX_TREES = 24
 MAX_TOTAL_NODES = 1000
 MAX_CROSS_LINKS = 200
+MAX_TENSIONS = 200
+MAX_COLLAPSED_GROUPS = 200
+MAX_COUNTER_VALUE = 1_000_000
 MAX_CANVAS_DIMENSION = 16384
-MAX_CANVAS_PIXELS = 50_000_000
+MAX_CANVAS_PIXELS = 24_000_000
 MAX_TEXT_LENGTH = 2000
 MAX_ID_LENGTH = 128
 NODE_WIDTH = 320
@@ -171,6 +178,10 @@ DISPLAY_FIELDS = {"collapsed_groups"}
 GROUP_FIELDS = {"id", "tree_id", "title", "summary", "member_node_ids"}
 CALIBRATION_FIELDS = {"node_id", "question"}
 IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+STATE_BLOCK_BEGIN = "<!-- philosophical-guide-state: begin -->"
+STATE_BLOCK_END = "<!-- philosophical-guide-state: end -->"
+STATE_DIGEST_PREFIX = "<!-- philosophical-guide-state-sha256: "
+STATE_PRODUCER_PREFIX = "<!-- philosophical-guide-producer: "
 
 
 def display_width(text: str) -> int:
@@ -237,16 +248,15 @@ def normalize_text(value: Any, where: str, *, max_length: int = MAX_TEXT_LENGTH,
             or 0x10000 <= codepoint <= 0x10FFFF
         ):
             raise RoadmapError(f"{where} contains a character that XML cannot represent")
-    normalized = " ".join(value.split())
-    if not normalized:
+    if not value.split():
         raise RoadmapError(f"{where} must be a non-empty string")
-    if len(normalized) > max_length:
+    if len(value) > max_length:
         raise RoadmapError(f"{where} exceeds the {max_length}-character limit")
-    if identifier and not IDENTIFIER_RE.fullmatch(normalized):
+    if identifier and not IDENTIFIER_RE.fullmatch(value):
         raise RoadmapError(
             f"{where} must use 1-{MAX_ID_LENGTH} ASCII letters, digits, dots, colons, underscores, or hyphens"
         )
-    return normalized
+    return value
 
 
 def require_string(
@@ -258,14 +268,12 @@ def require_string(
     identifier: bool = False,
 ) -> str:
     value = obj.get(key)
-    normalized = normalize_text(
+    return normalize_text(
         value,
         f"{where}.{key}",
         max_length=max_length,
         identifier=identifier,
     )
-    obj[key] = normalized
-    return normalized
 
 
 def require_string_list(
@@ -279,7 +287,7 @@ def require_string_list(
         raise RoadmapError(f"{where} must be a list")
     if non_empty and not value:
         raise RoadmapError(f"{where} must be a non-empty list")
-    normalized = [
+    validated = [
         normalize_text(
             item,
             f"{where}[{i}]",
@@ -288,10 +296,9 @@ def require_string_list(
         )
         for i, item in enumerate(value)
     ]
-    if len(normalized) != len(set(normalized)):
+    if len(validated) != len(set(validated)):
         raise RoadmapError(f"{where} must not contain duplicates")
-    value[:] = normalized
-    return value
+    return validated
 
 
 def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -303,12 +310,18 @@ def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def read_utf8_limited(path: Path, limit: int, label: str) -> str:
+    with path.open("rb") as handle:
+        raw = handle.read(limit + 1)
+    if len(raw) > limit:
+        raise RoadmapError(f"{label} exceeds the {limit}-byte limit")
+    return raw.decode("utf-8")
+
+
 def load_json_strict(path: Path) -> dict[str, Any]:
-    if path.stat().st_size > MAX_INPUT_BYTES:
-        raise RoadmapError(f"input JSON exceeds the {MAX_INPUT_BYTES}-byte limit")
     try:
         value = json.loads(
-            path.read_text(encoding="utf-8"),
+            read_utf8_limited(path, MAX_INPUT_BYTES, "input JSON"),
             object_pairs_hook=reject_duplicate_keys,
         )
     except json.JSONDecodeError:
@@ -316,6 +329,77 @@ def load_json_strict(path: Path) -> dict[str, Any]:
     except (RecursionError, ValueError) as exc:
         raise RoadmapError(f"input JSON cannot be parsed safely: {exc}") from None
     return ensure_object(value, "input JSON root")
+
+
+def state_payload(state: dict[str, Any]) -> str:
+    return json.dumps(state, ensure_ascii=False, indent=2)
+
+
+def state_digest(payload: str) -> str:
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest().upper()
+
+
+def _single_prefixed_value(lines: list[str], prefix: str, label: str) -> str:
+    matches = [line[len(prefix) : -4] for line in lines if line.startswith(prefix) and line.endswith(" -->")]
+    if len(matches) != 1:
+        raise RoadmapError(f"Markdown state block must contain exactly one {label}")
+    return matches[0]
+
+
+def extract_markdown_state(text: str, *, allow_legacy: bool = False) -> tuple[dict[str, Any], dict[str, str]]:
+    lines = text.splitlines()
+    begin_indexes = [i for i, line in enumerate(lines) if line == STATE_BLOCK_BEGIN]
+    end_indexes = [i for i, line in enumerate(lines) if line == STATE_BLOCK_END]
+    if len(begin_indexes) != 1 or len(end_indexes) != 1 or begin_indexes[0] >= end_indexes[0]:
+        if begin_indexes or end_indexes:
+            raise RoadmapError("Markdown contains malformed or ambiguous state block markers")
+        if not allow_legacy:
+            raise RoadmapError(
+                "Markdown is missing one unambiguous integrity-marked state block; "
+                "use --allow-legacy-markdown only for a trusted legacy export"
+            )
+        headings = [i for i, line in enumerate(lines) if line == "## 机器可读状态"]
+        if len(headings) != 1:
+            raise RoadmapError("legacy Markdown must contain exactly one machine-readable state heading")
+        block_lines = lines[headings[0] + 1 :]
+        metadata = {"producer": "legacy-unknown", "digest": "unverified"}
+    else:
+        block_lines = lines[begin_indexes[0] + 1 : end_indexes[0]]
+        claimed_digest = _single_prefixed_value(block_lines, STATE_DIGEST_PREFIX, "state digest")
+        producer = _single_prefixed_value(block_lines, STATE_PRODUCER_PREFIX, "producer marker")
+        if not re.fullmatch(r"[0-9A-F]{64}", claimed_digest):
+            raise RoadmapError("Markdown state digest must be 64 uppercase hexadecimal characters")
+        if not re.fullmatch(r"[A-Za-z0-9._/-]{1,128}", producer):
+            raise RoadmapError("Markdown producer marker is malformed")
+        metadata = {"producer": producer, "digest": claimed_digest}
+
+    fence_starts = [i for i, line in enumerate(block_lines) if re.fullmatch(r"`{3,}json", line)]
+    if len(fence_starts) != 1:
+        raise RoadmapError("Markdown state block must contain exactly one JSON code fence")
+    start = fence_starts[0]
+    fence = block_lines[start][:-4]
+    fence_ends = [i for i in range(start + 1, len(block_lines)) if block_lines[i] == fence]
+    if len(fence_ends) != 1:
+        raise RoadmapError("Markdown state block must contain exactly one matching closing fence")
+    payload = "\n".join(block_lines[start + 1 : fence_ends[0]])
+    try:
+        value = json.loads(payload, object_pairs_hook=reject_duplicate_keys)
+    except json.JSONDecodeError as exc:
+        raise RoadmapError(f"Markdown state JSON is invalid: {exc}") from None
+    except (RecursionError, ValueError) as exc:
+        raise RoadmapError(f"Markdown state JSON cannot be parsed safely: {exc}") from None
+    if not allow_legacy or metadata["digest"] != "unverified":
+        actual_digest = state_digest(payload)
+        if actual_digest != metadata["digest"]:
+            raise RoadmapError(
+                f"Markdown state digest mismatch: expected {metadata['digest']}, got {actual_digest}"
+            )
+    return ensure_object(value, "Markdown state JSON root"), metadata
+
+
+def load_markdown_state_strict(path: Path, *, allow_legacy: bool = False) -> tuple[dict[str, Any], dict[str, str]]:
+    text = read_utf8_limited(path, MAX_MARKDOWN_BYTES, "input Markdown")
+    return extract_markdown_state(text, allow_legacy=allow_legacy)
 
 
 def validate_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -326,13 +410,19 @@ def validate_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
         raise RoadmapError(
             f"schema_version must be {SCHEMA_VERSION!r}; got {schema_version!r}"
         )
-    if type(state.get("map_version")) is not int or state["map_version"] < 1:
-        raise RoadmapError("map_version must be a positive integer")
+    if (
+        type(state.get("map_version")) is not int
+        or state["map_version"] < 1
+        or state["map_version"] > MAX_COUNTER_VALUE
+    ):
+        raise RoadmapError(f"map_version must be an integer from 1 to {MAX_COUNTER_VALUE}")
     require_string(state, "title", "root", max_length=200)
     require_string(state, "topic_summary", "root", max_length=500)
     turns = state.get("substantive_turns_since_checkpoint")
-    if type(turns) is not int or turns < 0:
-        raise RoadmapError("substantive_turns_since_checkpoint must be a non-negative integer")
+    if type(turns) is not int or turns < 0 or turns > MAX_COUNTER_VALUE:
+        raise RoadmapError(
+            f"substantive_turns_since_checkpoint must be an integer from 0 to {MAX_COUNTER_VALUE}"
+        )
 
     trees = state.get("trees")
     if not isinstance(trees, list) or not trees:
@@ -342,6 +432,7 @@ def validate_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
     node_index: dict[str, dict[str, Any]] = {}
     node_tree: dict[str, str] = {}
+    tree_status_by_id: dict[str, str] = {}
     tree_ids: set[str] = set()
     total_nodes = 0
     for tree_i, tree in enumerate(trees):
@@ -356,6 +447,7 @@ def validate_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
         tree_status = require_string(tree, "status", where, max_length=32)
         if tree_status not in TREE_STATUSES:
             raise RoadmapError(f"{where}.status is not supported: {tree_status}")
+        tree_status_by_id[tree_id] = tree_status
         nodes = tree.get("nodes")
         if not isinstance(nodes, list) or not nodes:
             raise RoadmapError(f"{where}.nodes must be a non-empty list")
@@ -384,12 +476,22 @@ def validate_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
             if source == "user_confirmed":
                 require_string(node, "evidence_turn", node_where, identifier=True)
             elif "evidence_turn" in node:
-                require_string(node, "evidence_turn", node_where, identifier=True)
+                raise RoadmapError(f"{node_where}.evidence_turn is allowed only for user_confirmed nodes")
             if "quote" in node:
+                if source != "user_confirmed":
+                    raise RoadmapError(f"{node_where}.quote is allowed only for user_confirmed nodes")
                 require_string(node, "quote", node_where, max_length=1000)
+            if relation == "revision_pending" and source != "model_inference_pending":
+                raise RoadmapError(
+                    f"{node_where}.revision_pending requires source='model_inference_pending'"
+                )
+            if relation in {"revision_confirmed", "qualification", "conflict"} and source != "user_confirmed":
+                raise RoadmapError(f"{node_where}.{relation} requires source='user_confirmed'")
+            if relation == "callback" and path_status != "reactivated":
+                raise RoadmapError(f"{node_where}.callback requires path_status='reactivated'")
             parent_id = node.get("parent_id")
             if parent_id is not None:
-                node["parent_id"] = normalize_text(
+                normalize_text(
                     parent_id,
                     f"{node_where}.parent_id",
                     max_length=MAX_ID_LENGTH,
@@ -422,8 +524,14 @@ def validate_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
             raise RoadmapError(
                 f"current node {node_id} must have path_status current or reactivated"
             )
+        if tree_status_by_id[node_tree[node_id]] != "active":
+            raise RoadmapError(f"current node {node_id} must belong to an active tree")
     listed_current = set(current_ids)
     for node_id, node in node_index.items():
+        if node["path_status"] in {"current", "reactivated"} and tree_status_by_id[node_tree[node_id]] != "active":
+            raise RoadmapError(
+                f"node {node_id} with path_status {node['path_status']} must belong to an active tree"
+            )
         if node["path_status"] == "current" and node_id not in listed_current:
             raise RoadmapError(f"node {node_id} has path_status current but is missing from current_node_ids")
 
@@ -459,6 +567,23 @@ def validate_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
             raise RoadmapError(f"{where}.confirmed_revision must have status='confirmed'")
         if relation in {"qualification", "conflict"} and status != "confirmed":
             raise RoadmapError(f"{where}.{relation} must have status='confirmed'")
+        if relation == "callback" and status != "confirmed":
+            raise RoadmapError(f"{where}.callback must have status='confirmed'")
+        if status == "confirmed" and (
+            node_index[start]["source"] == "model_inference_pending"
+            or node_index[end]["source"] == "model_inference_pending"
+        ):
+            raise RoadmapError(f"{where} cannot confirm a relation involving a pending model inference")
+        if relation == "possible_revision" and (
+            node_index[start]["source"] != "user_confirmed"
+            or node_index[end]["source"] != "user_confirmed"
+        ):
+            raise RoadmapError(f"{where}.possible_revision must connect two user_confirmed nodes")
+        if relation in {"confirmed_revision", "qualification", "conflict"} and (
+            node_index[start]["source"] != "user_confirmed"
+            or node_index[end]["source"] != "user_confirmed"
+        ):
+            raise RoadmapError(f"{where}.{relation} must connect two user_confirmed nodes")
         link_key = (start, end, relation)
         if link_key in link_keys:
             raise RoadmapError(f"{where} duplicates an existing relation")
@@ -468,6 +593,8 @@ def validate_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
     tensions = state.get("tensions", [])
     if not isinstance(tensions, list):
         raise RoadmapError("tensions must be a list")
+    if len(tensions) > MAX_TENSIONS:
+        raise RoadmapError(f"tensions exceeds the {MAX_TENSIONS}-item limit")
     tension_ids: set[str] = set()
     for i, tension in enumerate(tensions):
         where = f"tensions[{i}]"
@@ -519,6 +646,10 @@ def validate_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
     groups = display.get("collapsed_groups", [])
     if not isinstance(groups, list):
         raise RoadmapError("display.collapsed_groups must be a list")
+    if len(groups) > MAX_COLLAPSED_GROUPS:
+        raise RoadmapError(
+            f"display.collapsed_groups exceeds the {MAX_COLLAPSED_GROUPS}-group limit"
+        )
     group_ids: set[str] = set()
     grouped_nodes: set[str] = set()
     for i, group in enumerate(groups):
@@ -981,15 +1112,24 @@ def render_markdown(state: dict[str, Any], view_state: dict[str, Any]) -> str:
             ]
         )
 
-    payload = json.dumps(state, ensure_ascii=False, indent=2)
+    payload = state_payload(state)
+    digest = state_digest(payload)
     fence = json_fence(payload)
     lines.extend(
         [
             "## 机器可读状态",
             "",
+            f"- 生成器：`philosophical-guide {SKILL_VERSION}`",
+            f"- 状态 SHA-256：`{digest}`",
+            "- 此摘要用于发现意外损坏，不证明文件作者或来源可信。",
+            "",
+            STATE_BLOCK_BEGIN,
+            f"{STATE_DIGEST_PREFIX}{digest} -->",
+            f"{STATE_PRODUCER_PREFIX}philosophical-guide/{SKILL_VERSION} -->",
             f"{fence}json",
             payload,
             fence,
+            STATE_BLOCK_END,
             "",
         ]
     )
@@ -1085,7 +1225,13 @@ def render_png(svg_path: Path, png_path: Path, width: int, height: int) -> tuple
         except Exception as exc:
             failures.append(f"{Path(browser).name}: {exc}")
         finally:
-            shutil.rmtree(temp_root, ignore_errors=True)
+            try:
+                shutil.rmtree(temp_root)
+            except OSError as exc:
+                print(
+                    f"Warning: browser temporary directory could not be removed: {temp_root}: {exc}",
+                    file=sys.stderr,
+                )
     reason = "; ".join(failures) if failures else "no CairoSVG or supported headless browser found"
     return False, reason
 
@@ -1099,23 +1245,85 @@ def safe_basename(value: str) -> str:
     return cleaned or "thought-roadmap"
 
 
+@contextmanager
+def output_lock(output_dir: Path, basename: str) -> Iterator[None]:
+    """Serialize writers for one basename and make a stale lock visible."""
+    lock_path = output_dir / f".{basename}.lock"
+    try:
+        descriptor = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        raise RoadmapError(
+            f"output is locked by another or interrupted render: {lock_path}; "
+            "verify no renderer is running before removing the stale lock"
+        ) from None
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(f"pid={os.getpid()}\n")
+        yield
+    finally:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", required=True, type=Path, help="Roadmap state JSON")
-    parser.add_argument("--output-dir", required=True, type=Path, help="Directory for outputs")
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--input", type=Path, help="Roadmap state JSON")
+    inputs.add_argument("--input-markdown", type=Path, help="Renderer-produced roadmap Markdown")
+    parser.add_argument("--output-dir", type=Path, help="Directory for outputs")
     parser.add_argument("--basename", default="thought-roadmap", help="Output filename stem")
     png_mode = parser.add_mutually_exclusive_group()
     png_mode.add_argument("--require-png", action="store_true", help="Fail if PNG cannot be rendered")
     png_mode.add_argument("--skip-png", action="store_true", help="Generate SVG and Markdown without trying PNG")
     parser.add_argument("--force", action="store_true", help="Replace existing output files")
+    parser.add_argument("--validate-only", action="store_true", help="Validate input without writing outputs")
+    parser.add_argument(
+        "--allow-legacy-markdown",
+        action="store_true",
+        help="Accept an unverified pre-rc.5 Markdown state block from a trusted source",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     try:
-        state = load_json_strict(args.input)
+        if args.allow_legacy_markdown and args.input_markdown is None:
+            raise RoadmapError("--allow-legacy-markdown requires --input-markdown")
+        if args.input_markdown is not None:
+            state, input_metadata = load_markdown_state_strict(
+                args.input_markdown,
+                allow_legacy=args.allow_legacy_markdown,
+            )
+            input_kind = "markdown"
+        else:
+            state = load_json_strict(args.input)
+            input_metadata = {"producer": "external-json", "digest": "not-provided"}
+            input_kind = "json"
         validate_state(state)
+        payload = state_payload(state)
+        digest = state_digest(payload)
+        if args.validate_only:
+            print(
+                json.dumps(
+                    {
+                        "valid": True,
+                        "input_kind": input_kind,
+                        "schema_version": state["schema_version"],
+                        "map_version": state["map_version"],
+                        "state_sha256": digest,
+                        "input_producer": input_metadata["producer"],
+                        "input_integrity": input_metadata["digest"],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
+        if args.output_dir is None:
+            raise RoadmapError("--output-dir is required unless --validate-only is used")
         view_state = build_view_state(state)
         width, height, positions, tree_layouts = layout_state(view_state)
         svg = render_svg(view_state, width, height, positions, tree_layouts)
@@ -1126,39 +1334,43 @@ def main() -> int:
         svg_path = args.output_dir / f"{basename}.svg"
         png_path = args.output_dir / f"{basename}.png"
         md_path = args.output_dir / f"{basename}.md"
-        targets = [svg_path, png_path, md_path]
-        existing = [str(path) for path in targets if path.exists()]
-        if existing and not args.force:
-            raise RoadmapError(
-                "output already exists; choose another basename or pass --force: " + ", ".join(existing)
-            )
+        with output_lock(args.output_dir, basename):
+            targets = [svg_path, png_path, md_path]
+            existing = [str(path) for path in targets if path.exists()]
+            if existing and not args.force:
+                raise RoadmapError(
+                    "output already exists; choose another basename or pass --force: " + ", ".join(existing)
+                )
 
-        with tempfile.TemporaryDirectory(prefix=".thought-roadmap-", dir=args.output_dir) as temp_name:
-            temp_dir = Path(temp_name)
-            temp_svg = temp_dir / svg_path.name
-            temp_png = temp_dir / png_path.name
-            temp_md = temp_dir / md_path.name
-            temp_svg.write_text(svg, encoding="utf-8", newline="\n")
-            temp_md.write_text(markdown, encoding="utf-8", newline="\n")
-            if args.skip_png:
-                png_ok, png_engine = False, "skipped by request"
-            else:
-                png_ok, png_engine = render_png(temp_svg, temp_png, width, height)
-            if not png_ok and args.require_png:
-                print(f"PNG not generated: {png_engine}", file=sys.stderr)
-                return 3
-            os.replace(temp_svg, svg_path)
-            os.replace(temp_md, md_path)
-            if png_ok:
-                os.replace(temp_png, png_path)
-            elif args.force and png_path.exists():
-                png_path.unlink()
+            with tempfile.TemporaryDirectory(prefix=".thought-roadmap-", dir=args.output_dir) as temp_name:
+                temp_dir = Path(temp_name)
+                temp_svg = temp_dir / svg_path.name
+                temp_png = temp_dir / png_path.name
+                temp_md = temp_dir / md_path.name
+                temp_svg.write_text(svg, encoding="utf-8", newline="\n")
+                temp_md.write_text(markdown, encoding="utf-8", newline="\n")
+                if args.skip_png:
+                    png_ok, png_engine = False, "skipped by request"
+                else:
+                    png_ok, png_engine = render_png(temp_svg, temp_png, width, height)
+                if not png_ok and args.require_png:
+                    print(f"PNG not generated: {png_engine}", file=sys.stderr)
+                    return 3
+                os.replace(temp_svg, svg_path)
+                os.replace(temp_md, md_path)
+                if png_ok:
+                    os.replace(temp_png, png_path)
+                elif args.force and png_path.exists():
+                    png_path.unlink()
 
         result = {
             "svg": str(svg_path.resolve()),
             "png": str(png_path.resolve()) if png_ok else None,
             "markdown": str(md_path.resolve()),
             "png_engine": png_engine if png_ok else None,
+            "schema_version": state["schema_version"],
+            "producer": f"philosophical-guide/{SKILL_VERSION}",
+            "state_sha256": digest,
             "dimensions": {"width": width, "height": height},
         }
         print(json.dumps(result, ensure_ascii=False, indent=2))

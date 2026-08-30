@@ -43,6 +43,13 @@
 
 ## 机器可读状态
 
+- 生成器：`philosophical-guide 0.3.0-rc.5`
+- 状态 SHA-256：`1EEDA9B0496C3B3DCD364D6ED60EE1AE4C8FD1EBFAEC0B8EAC1AB681E6277705`
+- 此摘要用于发现意外损坏，不证明文件作者或来源可信。
+
+<!-- philosophical-guide-state: begin -->
+<!-- philosophical-guide-state-sha256: 1EEDA9B0496C3B3DCD364D6ED60EE1AE4C8FD1EBFAEC0B8EAC1AB681E6277705 -->
+<!-- philosophical-guide-producer: philosophical-guide/0.3.0-rc.5 -->
 ```json
 {
   "schema_version": "1.1",
@@ -202,3 +209,4 @@
   }
 }
 ```
+<!-- philosophical-guide-state: end -->
