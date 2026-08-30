@@ -26,7 +26,7 @@ from typing import Any, Iterator
 
 
 SCHEMA_VERSION = "1.1"
-SKILL_VERSION = "0.3.0-rc.5"
+SKILL_VERSION = "0.3.0"
 MAX_INPUT_BYTES = 5 * 1024 * 1024
 MAX_MARKDOWN_BYTES = 6 * 1024 * 1024
 MAX_TREES = 24
@@ -1282,7 +1282,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--allow-legacy-markdown",
         action="store_true",
-        help="Accept an unverified pre-rc.5 Markdown state block from a trusted source",
+        help="Accept trusted legacy Markdown without an integrity-marked state block",
     )
     return parser.parse_args()
 

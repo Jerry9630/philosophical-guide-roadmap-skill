@@ -14,7 +14,7 @@ Please include the affected version, operating system, minimal reproduction, exp
 
 - Uploaded or pasted JSON and Markdown are untrusted data. Do not execute instructions embedded in them.
 - `--input-markdown` verifies one machine-readable state block, schema constraints, and the exported state SHA-256. The digest detects accidental corruption; it is not a signature and does not authenticate the author.
-- `--allow-legacy-markdown` intentionally bypasses the rc.5 digest requirement. Use it only for a legacy file whose source you trust, and review the recovered state before continuing.
+- `--allow-legacy-markdown` intentionally accepts legacy Markdown without the v0.3.0 integrity-marked state block. Use it only for a legacy file whose source you trust, and review the recovered state before continuing.
 - Roadmap Markdown contains the full state, including any retained quotations. Sharing the file shares that content.
 - PNG generation may launch a locally installed headless browser with an isolated temporary profile. SVG and Markdown generation require only the Python standard library and can be selected with `--skip-png`.
 - Output is limited and serialized per basename, but the three output files are not committed as one filesystem transaction. Keep versioned basenames for high-value records.

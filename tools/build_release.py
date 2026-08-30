@@ -84,6 +84,19 @@ def archive_name(version: str) -> str:
     return f"{ARCHIVE_PREFIX}{version}.zip"
 
 
+def validate_archive_filename(value: str) -> str:
+    if (
+        not value.endswith(".zip")
+        or len(value) > 128
+        or value in {".", ".."}
+        or Path(value).name != value
+        or re.search(r'[<>:"/\\|?*]', value) is not None
+        or any(ord(char) < 0x20 for char in value)
+    ):
+        raise ReleaseError("archive name must be one safe .zip filename without a directory")
+    return value
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -163,6 +176,7 @@ def parse_args() -> argparse.Namespace:
     build = subparsers.add_parser("build", help="Build, verify, and checksum the current Skill")
     build.add_argument("--version", help="Expected version; defaults to SKILL.md metadata.version")
     build.add_argument("--output-dir", type=Path, default=REPO_ROOT)
+    build.add_argument("--archive-name", help="Public ZIP filename; defaults to the versioned ASCII name")
     verify = subparsers.add_parser("verify", help="Verify an existing archive against current source")
     verify.add_argument("--archive", required=True, type=Path)
     return parser.parse_args()
@@ -180,7 +194,8 @@ def main() -> int:
                     f"requested version {version!r} does not match SKILL.md metadata.version {detected!r}"
                 )
             args.output_dir.mkdir(parents=True, exist_ok=True)
-            output = args.output_dir / archive_name(version)
+            filename = validate_archive_filename(args.archive_name) if args.archive_name else archive_name(version)
+            output = args.output_dir / filename
             write_archive(output, files)
             report = verify_archive(output, files)
             update_checksums(output.name, str(report["sha256"]))

@@ -4,7 +4,7 @@ description: 对哲学问题、价值判断或存在性困惑进行苏格拉底�
 license: MIT
 metadata:
   author: Jerry
-  version: "0.3.0-rc.5"
+  version: "0.3.0"
 ---
 
 # 哲思引导者

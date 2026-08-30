@@ -16,10 +16,10 @@ SPEC.loader.exec_module(RELEASE)
 
 class ReleaseBuildTests(unittest.TestCase):
     def test_version_matches_skill_metadata(self):
-        self.assertEqual(RELEASE.skill_version(), "0.3.0-rc.5")
+        self.assertEqual(RELEASE.skill_version(), "0.3.0")
         self.assertEqual(
             RELEASE.archive_name(RELEASE.skill_version()),
-            "philosophical-guide-roadmap-v0.3.0-rc.5.zip",
+            "philosophical-guide-roadmap-v0.3.0.zip",
         )
 
     def test_archive_is_reproducible_and_matches_source(self):
@@ -46,6 +46,11 @@ class ReleaseBuildTests(unittest.TestCase):
                     archive.writestr(member, b"tampered")
             with self.assertRaisesRegex(RELEASE.ReleaseError, "duplicate member"):
                 RELEASE.verify_archive(archive_path, files)
+
+    def test_public_archive_name_allows_unicode_but_rejects_directories(self):
+        self.assertEqual(RELEASE.validate_archive_filename("哲思引导者skill.zip"), "哲思引导者skill.zip")
+        with self.assertRaisesRegex(RELEASE.ReleaseError, "one safe .zip filename"):
+            RELEASE.validate_archive_filename("../unsafe.zip")
 
 
 if __name__ == "__main__":

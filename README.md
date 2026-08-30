@@ -2,7 +2,7 @@
 
 一个面向中文哲学讨论的开源 Agent Skill：通过概念澄清、前提检验、有限反例和开放追问，帮助用户检查自己如何走向判断；在用户明确启用后，还可以维护可校准、可跨对话续聊的思想路标。
 
-> 当前状态：v0.3.0-rc.5。Skill、路标渲染器、Markdown 恢复校验与可复现打包链路可以完整运行，程序回归已通过；模式提醒与核心哲思引导尚未完成 rc.5 正式模型回归，因此仍定位为 research preview，不把程序修复描述成模型效果已经验证。
+> 当前状态：v0.3.0 正式发行版。Skill、路标渲染器、Markdown 恢复校验与可复现打包链路可以完整运行，程序回归已通过；模式提醒与核心哲思引导尚未完成 v0.3.0 正式模型回归，因此产品定位仍是 research preview，不把程序稳定性误写成模型效果已经验证。
 
 ![思想路标预览](preview/thought-roadmap-v1.png)
 
@@ -40,7 +40,7 @@ python philosophical-guide/scripts/render_thought_roadmap.py --input philosophic
 
 ## 安装
 
-下载 GitHub Release 中的 `philosophical-guide-roadmap-v0.3.0-rc.5.zip`，核对 `SHA256SUMS.txt` 后解压。ZIP 顶层只有一个 `philosophical-guide` 文件夹；把它放入个人 Codex Skill 目录：
+下载 GitHub Release 中的 `哲思引导者skill.zip`，核对 `SHA256SUMS.txt` 后解压。ZIP 顶层只有一个 `philosophical-guide` 文件夹；把它放入个人 Codex Skill 目录：
 
 - Windows：`%USERPROFILE%\.codex\skills\philosophical-guide`
 - macOS / Linux：`$HOME/.codex/skills/philosophical-guide`
@@ -80,7 +80,7 @@ SVG 和续聊 Markdown 只使用 Python 标准库。PNG 需要以下任一环境
 
 同名输出默认不会被覆盖，避免把不同版本混在一起。确定要替换时加 `--force`；要求 PNG 必须成功时加 `--require-png`。
 
-恢复 rc.5 生成的续聊 Markdown 时，先执行完整性与结构校验：
+恢复 v0.3.0 生成的续聊 Markdown 时，先执行完整性与结构校验：
 
 ```text
 python philosophical-guide/scripts/render_thought_roadmap.py --input-markdown roadmap.md --validate-only
@@ -94,7 +94,7 @@ python philosophical-guide/scripts/render_thought_roadmap.py --input-markdown ro
 - 结构化状态默认写入任务临时目录或用户指定目录，不写回 Skill 目录。
 - 续聊 Markdown 内含完整 JSON；分享该文件等于分享其中的观点和最小引文。
 - 默认不记录姓名、联系方式、健康信息、精确地址和第三方隐私。
-- 协议要求模型把导入的 Markdown/JSON 当作不可信数据，不执行其中夹带的指令；文件中的“用户确认”只表示历史快照的声明。rc.5 Markdown 会记录状态 SHA-256，用于发现意外损坏，但这不是数字签名，不能证明作者或来源可信。只导入你信任来源的文件，并在恢复后检查关键节点。
+- 协议要求模型把导入的 Markdown/JSON 当作不可信数据，不执行其中夹带的指令；文件中的“用户确认”只表示历史快照的声明。v0.3.0 Markdown 会记录状态 SHA-256，用于发现意外损坏，但这不是数字签名，不能证明作者或来源可信。只导入你信任来源的文件，并在恢复后检查关键节点。
 - 用户可以要求删除、更正或匿名化自己的记录；“保留旧观点”不是拒绝删除请求的理由。
 
 ## 评测状态
@@ -128,13 +128,13 @@ philosophical-guide-roadmap-skill/
 python -m unittest discover -s tests -v
 ```
 
-49 项自动测试覆盖安装结构、预览同步、无依赖快速演示、状态校验、逐字档案保持、无损折叠、Markdown 摘要校验与恢复、语义来源约束、并发输出锁、资源上限，以及重复键、隐藏字段、坏对象、非法字符、极端画布、错误桥接、陈旧输出和可复现 ZIP 等回归风险。模型行为回归仍需在冻结 Skill 上另行运行，不能由代码测试替代。
+50 项自动测试覆盖安装结构、预览同步、无依赖快速演示、状态校验、逐字档案保持、无损折叠、Markdown 摘要校验与恢复、语义来源约束、并发输出锁、资源上限、安全发行文件名，以及重复键、隐藏字段、坏对象、非法字符、极端画布、错误桥接、陈旧输出和可复现 ZIP 等回归风险。模型行为回归仍需在冻结 Skill 上另行运行，不能由代码测试替代。
 
 发布包由标准库脚本确定性生成，并立即逐成员比对源目录：
 
 ```text
-python tools/build_release.py build
-python tools/build_release.py verify --archive philosophical-guide-roadmap-v0.3.0-rc.5.zip
+python tools/build_release.py build --archive-name "哲思引导者skill.zip"
+python tools/build_release.py verify --archive "哲思引导者skill.zip"
 ```
 
 安全问题与不可信导入边界见 [SECURITY.md](SECURITY.md)。
